@@ -1,15 +1,16 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
+from datetime import datetime
 
 # ==========================================
 # 1. INISIALISASI DATABASE & TABEL
 # ==========================================
 def init_db():
-    conn = sqlite3.connect('mts_ittihadiyah.db')
+    conn = sqlite3.connect('mts_ittihadiyah.db', check_same_thread=False)
     c = conn.cursor()
     
-    # Tabel Pengguna (Users)
+    # Tabel Pengguna
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -36,14 +37,14 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tanggal TEXT,
             nama_siswa TEXT,
-            jenis TEXT, -- 'Tahfiz' atau 'Tilawah'
+            jenis TEXT,
             surah_ayat TEXT,
             keterangan TEXT,
             guru TEXT
         )
     ''')
     
-    # Tambahkan akun Kepala Madrasah default jika belum ada
+    # Akun default Kepala Madrasah
     c.execute("SELECT * FROM users WHERE username='kamad'")
     if not c.fetchone():
         c.execute("INSERT INTO users VALUES ('kamad', 'admin123', 'Kepala Madrasah', 'Kepala Madrasah')")
@@ -51,23 +52,26 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Fungsi helper database
 def run_query(query, params=(), is_select=True):
-    conn = sqlite3.connect('mts_ittihadiyah.db')
-    c = conn.cursor()
-    c.execute(query, params)
-    res = c.fetchall() if is_select else None
-    conn.commit()
-    conn.close()
-    return res
+    try:
+        conn = sqlite3.connect('mts_ittihadiyah.db', check_same_thread=False)
+        c = conn.cursor()
+        c.execute(query, params)
+        res = c.fetchall() if is_select else None
+        conn.commit()
+        conn.close()
+        return res
+    except Exception as e:
+        st.error(f"Database Error: {e}")
+        return []
 
-# Jalankan inisialisasi DB
+# Jalankan DB
 init_db()
 
 # ==========================================
-# 2. SISTEM AUTENTIKASI (LOGIN)
+# 2. SISTEM LOGIN & SESSION STATE
 # ==========================================
-st.set_page_config(page_title="MTs Al-Ittihadiyah - App", layout="wide")
+st.set_page_config(page_title="MTs Al-Ittihadiyah", layout="wide")
 
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
@@ -75,29 +79,10 @@ if 'logged_in' not in st.session_state:
     st.session_state['nama'] = ""
     st.session_state['role'] = ""
 
-def login_user(username, password):
-    user = run_query("SELECT username, nama, role FROM users WHERE username=? AND password=?", (username, password))
-    if user:
-        st.session_state['logged_in'] = True
-        st.session_state['username'] = user[0][0]
-        st.session_state['nama'] = user[0][1]
-        st.session_state['role'] = user[0][2]
-        return True
-    return False
-
-def logout_user():
-    st.session_state['logged_in'] = False
-    st.session_state['username'] = ""
-    st.session_state['nama'] = ""
-    st.session_state['role'] = ""
-    st.rerun()
-
-# ==========================================
-# INTERFACE HALAMAN LOGIN
-# ==========================================
+# Tampilan Utama jika Belum Login
 if not st.session_state['logged_in']:
-    st.title("🏫 Sistem Informasi & Monitoring MTs Al-Ittihadiyah")
-    st.subheader("Buku Penghubung & Capaian Tahfiz/Tilawah")
+    st.title("🏫 MTs Al-Ittihadiyah")
+    st.subheader("Buku Penghubung & Monitoring Tahfiz/Tilawah")
     
     with st.form("login_form"):
         username = st.text_input("Username")
@@ -105,80 +90,138 @@ if not st.session_state['logged_in']:
         submit = st.form_submit_button("Masuk")
         
         if submit:
-            if login_user(username, password):
-                st.success(f"Selamat datang, {st.session_state['nama']}!")
+            user = run_query("SELECT username, nama, role FROM users WHERE username=? AND password=?", (username, password))
+            if user:
+                st.session_state['logged_in'] = True
+                st.session_state['username'] = user[0][0]
+                st.session_state['nama'] = user[0][1]
+                st.session_state['role'] = user[0][2]
+                st.success("Login Berhasil!")
                 st.rerun()
             else:
                 st.error("Username atau password salah.")
 else:
-    # Sidebar untuk Navigasi dan Info Login
+    # SIDEBAR CONTROL
     st.sidebar.title(f"👤 {st.session_state['nama']}")
-    st.sidebar.write(f"Role: **{st.session_state['role']}**")
-    if st.sidebar.button("Keluar / Logout"):
-        logout_user()
+    st.sidebar.info(f"Role: **{st.session_state['role']}**")
+    if st.sidebar.button("Keluar / Logout", type="primary"):
+        st.session_state['logged_in'] = False
+        st.rerun()
         
-    # ==========================================
-    # 3. DASHBOARD BERDASARKAN ROLE
-    # ==========================================
     role = st.session_state['role']
-    
-    # ------------------------------------------
-    # FITUR KHUSUS: KEPALA MADRASAH (PENGATURAN USER)
-    # ------------------------------------------
+    hari_ini = datetime.now().strftime("%Y-%m-%d")
+
+    # ==========================================
+    # INTERFACE 1: KEPALA MADRASAH (TOP CONTROL)
+    # ==========================================
     if role == "Kepala Madrasah":
-        st.title("Dashboard Kepala Madrasah (Top Control)")
+        st.title("Dashboard Kepala Madrasah")
+        t_user, t_buku, t_quran = st.tabs(["⚙️ Pengaturan Pengguna", "📋 Laporan Buku Penghubung", "📖 Laporan Tahfiz/Tilawah"])
         
-        menu = st.tabs(["Manajemen Pengguna", "Laporan Buku Penghubung", "Laporan Tahfiz/Tilawah"])
-        
-        with menu[0]:
-            st.header("⚙️ Pengaturan & Manajemen Pengguna")
-            
-            # Form Tambah Pengguna
+        with t_user:
+            st.subheader("Manajemen Akun Pengguna")
             with st.expander("➕ Tambah Pengguna Baru"):
-                new_user = st.text_input("Username Baru")
-                new_pass = st.text_input("Password Baru", type="password")
-                new_nama = st.text_input("Nama Lengkap")
-                new_role = st.selectbox("Role", ["Kepala Madrasah", "Wali Kelas", "Guru Qur'an", "Orang Tua"])
-                btn_add = st.button("Simpan Pengguna")
-                
-                if btn_add:
-                    if new_user and new_pass and new_nama:
-                        try:
-                            run_query("INSERT INTO users VALUES (?, ?, ?, ?)", (new_user, new_pass, new_nama, new_role), is_select=False)
-                            st.success(f"Pengguna {new_nama} berhasil ditambahkan!")
-                            st.rerun()
-                        except:
-                            st.error("Username sudah digunakan!")
-                    else:
-                        st.warning("Semua kolom harus diisi.")
-            
-            # Tampilkan & Aksi Edit/Hapus
-            st.subheader("Daftar Pengguna Saat Ini")
-            users_data = run_query("SELECT username, nama, role FROM users")
-            df_users = pd.DataFrame(users_data, columns=["Username", "Nama Lengkap", "Role"])
-            st.dataframe(df_users, use_container_width=True)
-            
-            # Hapus Pengguna
-            with st.expander("🗑️ Hapus Pengguna"):
-                user_to_delete = st.selectbox("Pilih Username yang akan dihapus", df_users["Username"].tolist())
-                btn_delete = st.button("Hapus", type="primary")
-                if btn_delete:
-                    if user_to_delete == "kamad":
-                        st.error("Akun utama Kamad tidak bisa dihapus!")
-                    else:
-                        run_query("DELETE FROM users WHERE username=?", (user_to_delete,), is_select=False)
-                        st.success(f"User {user_to_delete} berhasil dihapus.")
+                u_baru = st.text_input("Username Baru")
+                p_baru = st.text_input("Password Baru", type="password")
+                n_baru = st.text_input("Nama Lengkap")
+                r_baru = st.selectbox("Role", ["Kepala Madrasah", "Wali Kelas", "Guru Qur'an", "Orang Tua"])
+                if st.button("Simpan Akun"):
+                    if u_baru and p_baru and n_baru:
+                        run_query("INSERT INTO users VALUES (?, ?, ?, ?)", (u_baru, p_baru, n_baru, r_baru), is_select=False)
+                        st.success("User berhasil ditambahkan!")
                         st.rerun()
-
-        with menu[1]:
-            st.write("Fitur Laporan Buku Penghubung (Akan dikembangkan di langkah selanjutnya)")
             
-        with menu[2]:
-            st.write("Fitur Laporan Tahfiz/Tilawah (Akan dikembangkan di langkah selanjutnya)")
+            data_u = run_query("SELECT username, nama, role FROM users")
+            df_u = pd.DataFrame(data_u, columns=["Username", "Nama", "Role"])
+            st.dataframe(df_u, use_container_width=True)
+            
+            with st.expander("🗑️ Hapus Pengguna"):
+                u_hapus = st.selectbox("Pilih User", df_u["Username"].tolist())
+                if st.button("Hapus Akun", type="primary"):
+                    if u_hapus != "kamad":
+                        run_query("DELETE FROM users WHERE username=?", (u_hapus,), is_select=False)
+                        st.success("Terhapus!")
+                        st.rerun()
+                    else:
+                        st.error("Akun utama 'kamad' tidak bisa dihapus.")
 
-    # ------------------------------------------
-    # ROLE LAIN (Wali Kelas, Guru Qur'an, Orang Tua)
-    # ------------------------------------------
-    else:
-        st.title(f"Halaman {role}")
-        st.write(f"Halo {st.session_state['nama']}, modul untuk halaman Anda sedang disiapkan.")
+        with t_buku:
+            st.subheader("Semua Catatan Buku Penghubung")
+            data_b = run_query("SELECT tanggal, nama_siswa, catatan, wali_kelas FROM buku_penghubung")
+            st.dataframe(pd.DataFrame(data_b, columns=["Tanggal", "Siswa", "Catatan", "Wali Kelas"]), use_container_width=True)
+
+        with t_quran:
+            st.subheader("Semua Capaian Tahfiz & Tilawah")
+            data_q = run_query("SELECT tanggal, nama_siswa, jenis, surah_ayat, keterangan, guru FROM capaian_quran")
+            st.dataframe(pd.DataFrame(data_q, columns=["Tanggal", "Siswa", "Jenis", "Surah/Ayat", "Keterangan", "Guru"]), use_container_width=True)
+
+    # ==========================================
+    # INTERFACE 2: WALI KELAS
+    # ==========================================
+    elif role == "Wali Kelas":
+        st.title("Menu Utama Wali Kelas")
+        with st.form("form_buku"):
+            st.subheader("📝 Input Catatan Perkembangan Siswa")
+            siswa = st.text_input("Nama Siswa")
+            catatan = st.text_area("Catatan Perkembangan / Pengumuman ke Orang Tua")
+            if st.form_submit_button("Kirim ke Orang Tua"):
+                if siswa and catatan:
+                    run_query("INSERT INTO buku_penghubung (tanggal, nama_siswa, catatan, wali_kelas) VALUES (?,?,?,?)", 
+                              (hari_ini, siswa, catatan, st.session_state['nama']), is_select=False)
+                    st.success("Catatan berhasil disimpan!")
+                else:
+                    st.warning("Mohon isi nama siswa dan catatan.")
+                    
+        st.subheader("Riwayat Catatan Anda")
+        riwayat = run_query("SELECT tanggal, nama_siswa, catatan FROM buku_penghubung WHERE wali_kelas=?", (st.session_state['nama'],))
+        st.dataframe(pd.DataFrame(riwayat, columns=["Tanggal", "Siswa", "Catatan"]), use_container_width=True)
+
+    # ==========================================
+    # INTERFACE 3: GURU QUR'AN
+    # ==========================================
+    elif role == "Guru Qur'an":
+        st.title("Menu Setoran Hafalan & Tilawah")
+        with st.form("form_quran"):
+            siswa = st.text_input("Nama Siswa")
+            jenis = st.radio("Jenis Setoran", ["Tahfiz (Hafalan)", "Tilawah (Bacaan)"])
+            progres = st.text_input("Surah dan Ayat (Contoh: An-Naba' 1-10)")
+            ket = st.text_input("Keterangan Tambahan (Contoh: Lancar, Perlu Diulang)")
+            if st.form_submit_button("Simpan Setoran"):
+                if siswa and progres:
+                    run_query("INSERT INTO capaian_quran (tanggal, nama_siswa, jenis, surah_ayat, keterangan, guru) VALUES (?,?,?,?,?,?)",
+                              (hari_ini, siswa, jenis, progres, ket, st.session_state['nama']), is_select=False)
+                    st.success("Data setoran berhasil direkam!")
+                else:
+                    st.warning("Nama siswa dan Surah/Ayat harus diisi.")
+                    
+        st.subheader("Riwayat Input Setoran Anda")
+        riwayat_q = run_query("SELECT tanggal, nama_siswa, jenis, surah_ayat, keterangan FROM capaian_quran WHERE guru=?", (st.session_state['nama'],))
+        st.dataframe(pd.DataFrame(riwayat_q, columns=["Tanggal", "Siswa", "Jenis", "Surah/Ayat", "Keterangan"]), use_container_width=True)
+
+    # ==========================================
+    # INTERFACE 4: ORANG TUA
+    # ==========================================
+    elif role == "Orang Tua":
+        st.title("Portal Informasi Orang Tua Siswa")
+        st.info("Silakan cari nama anak Anda untuk melihat laporan perkembangan harian.")
+        
+        cari_nama = st.text_input("Ketik Nama Lengkap Anak Anda:")
+        if cari_nama:
+            st.subheader(f"📊 Laporan untuk: {cari_nama}")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("### 📋 Buku Penghubung (Wali Kelas)")
+                buku_ortu = run_query("SELECT tanggal, catatan, wali_kelas FROM buku_penghubung WHERE nama_siswa LIKE ?", (f"%{cari_nama}%",))
+                if buku_ortu:
+                    st.dataframe(pd.DataFrame(buku_ortu, columns=["Tanggal", "Catatan/Pesan", "Wali Kelas"]), use_container_width=True)
+                else:
+                    st.write("Belum ada catatan dari Wali Kelas.")
+                    
+            with col2:
+                st.markdown("### 📖 Capaian Hafalan Qur'an")
+                quran_ortu = run_query("SELECT tanggal, jenis, surah_ayat, keterangan, guru FROM capaian_quran WHERE nama_siswa LIKE ?", (f"%{cari_nama}%",))
+                if quran_ortu:
+                    st.dataframe(pd.DataFrame(quran_ortu, columns=["Tanggal", "Jenis", "Surah/Ayat", "Keterangan", "Guru"]), use_container_width=True)
+                else:
+                    st.write("Belum ada riwayat setoran hafalan.")
